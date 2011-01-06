@@ -10,6 +10,7 @@
 #
 # renfile_exif_date.pl
 # version 0.2 (2010/December/06)
+# version 0.3 (2011/January/04)
 #
 # GNU GPL Free Software
 #
@@ -44,12 +45,14 @@ use POSIX;
 use Gtk2 qw/-init/;
 use Image::ExifTool;
 use File::Basename;
-use Encode;
+use Encode::Guess qw/euc-jp shiftjis iso-2022-jp/;	# 必要ないエンコードは削除すること
 
 #use Data::Dumper;
 #use Data::HexDump;
 
+
 binmode( STDOUT, ":utf8" ); # "Wide character in print at ..." 警告を抑止
+#binmode(STDOUT, "encoding(sjis)");	# Windowsのコマンドラインではsjisになる
 
 my $strTargetDir = $ENV{'HOME'};		# 対象ディレクトリ
 my $flag_date_type = 'YYYY-mm-DD';	# 日時形式
@@ -57,6 +60,7 @@ my $flag_change_lowercase = 1;		# ファイル名を小文字に変換する
 
 my @arrImageFiles = ();		# 画像ファイルを格納する配列
 my @arrFileScanMask = ('*.jpg', '*.jpeg', '*.JPG', '*.JPEG');	# 処理対象
+			# Windowsの場合は、大文字の .JPG .JPEG の記述不要
 
 my $flag_gui = 0;
 my $flag_verbose = 1;
@@ -65,6 +69,7 @@ my $return_code = undef;
 
 # GUIスイッチを引数に起動されたとき（Gtk2でのユーザインターフェース対応）
 if(defined($ARGV[0]) && !(lc($ARGV[0]) cmp '-gui')){ $flag_gui = 1; }
+else{ print("\n".basename($0)." - ファイル名にExifより日時を付加するスクリプト\nGUI版は -gui スイッチで起動できます\n\n"); }
 
 # ディクトリ、日時形式の入力
 if($flag_gui == 1){ $return_code = sub_user_input_init_gui(); }
@@ -89,10 +94,10 @@ if($flag_gui == 1){
 else{
 	if(length($strPreview)>0){
 		print($strPreview);
-		printf("ファイル名変更処理をしますか？ (Y) : ");
+		printf("ファイル名変更処理をしますか？ (Y/N) [N] : ");
 		$_ = <STDIN>;
 		chomp($_);
-		if(uc($_) ne 'Y' && $_ ne ''){ print("中止しました\n"); exit(); }
+		if(length($_)<=0 || uc($_) ne 'Y'){ die("キャンセルしました\n"); }
 	}
 	else {
 		die("対象となるファイルが見つからないため終了します\n");
@@ -336,18 +341,35 @@ sub sub_display_message {
 # 対象ディレクトリ、処理形式などのユーザ入力（コンソール版）
 sub sub_user_input_init {
 
-	print("対象ディレクトリ : ");
+	# プログラムの引数は、対象ディレクトリとする
+	if($#ARGV == 0 && length($ARGV[0])>1)
+	{
+		$strTargetDir = sub_conv_to_flagged_utf8($ARGV[0]);
+	}
+
+	# 対象ディレクトリの入力
+	print("対象ディレクトリを、絶対または相対ディレクトリで入力。\n（例：/home/user/, ./）");
+	if(length($strTargetDir)>0){ print("[$strTargetDir] :"); }
+	else{ print(":"); }
 	$_ = <STDIN>;
-	chomp;
-	if(length($_)<1){ die("ディレクトリが入力されませんでした\n"); }
+	chomp();
+	if(length($_)<=0){
+		if(length($strTargetDir)>0){ $_ = $strTargetDir; }	# スクリプトの引数のデフォルトを使う場合
+		else{ die("終了（理由：ディレクトリが入力されませんでした）\n"); }
+	}
 	if(substr($_,-1) ne '/'){ $_ .= '/'; }	# ディレクトリは / で終わるように修正
-	unless(-d $_){ die("指定されたディレクトリは存在しません\n"); }
-	$strTargetDir = $_;
+	unless(-d $_){ die("終了（理由：ディレクトリ ".$_." が存在しません）\n"); }
+	unless($_ =~ m/^\// || $_ =~ m/^\.\//){ $strTargetDir = "./".$_; }
+	else{ $strTargetDir = $_; }
+	$strTargetDir = sub_conv_to_flagged_utf8($strTargetDir);
+	print("対象ディレクトリ : " . $strTargetDir . "\n\n");
+
 
 	print("日時形式の選択\n1.YYmmDD\n2.YYYYmmDD\n3.YYmmDDHHMM\n4.YYYYmmDDHHMM\n".
-		"5.YY-mm-DD\n6.YYYY-mm-DD\n7.YY-mm-DD-HHMM\n8.YYYY-mm-DD-HHMM\n[1〜8] : ");
+		"5.YY-mm-DD\n6.YYYY-mm-DD\n7.YY-mm-DD-HHMM\n8.YYYY-mm-DD-HHMM\n(1〜8) [1] : ");
 	$_ = <STDIN>;
 	chomp;
+	if(length($_)<=0){ $_ = 1; }
 	if(int($_)<1 || int($_)>8){ die("1〜8の範囲外が入力されました\n"); }
 	if($_==1){$flag_date_type = 'YYmmDD'; }
 	elsif($_==2){$flag_date_type = 'YYYYmmDD'; }
@@ -358,12 +380,19 @@ sub sub_user_input_init {
 	elsif($_==7){$flag_date_type = 'YY-mm-DD-HHMM'; }
 	elsif($_==8){$flag_date_type = 'YYYY-mm-DD-HHMM'; }
 
+	print("日付形式 : ".$flag_date_type."\n\n");
 
-	printf("同時に、ファイル名を小文字に変換しますか？ (Y) : ");
+	printf("同時に、ファイル名を小文字に変換しますか？ (Y/N) [Y] : ");
 	$_ = <STDIN>;
 	chomp;
-	if(uc($_) eq 'Y'){ $flag_change_lowercase = 1; }
-	else {$flag_change_lowercase = 0; }
+	if(length($_)<=0 || uc($_) eq 'Y'){
+		$flag_change_lowercase = 1;
+		print("ファイル名小文字化 : ON\n\n");
+	}
+	else {
+		$flag_change_lowercase = 0;
+		print("ファイル名小文字化 : OFF\n\n");
+	}
 
 	return(1);
 }
@@ -391,6 +420,7 @@ sub sub_scan_imagefiles {
 	foreach(@arrScan)
 	{
 		if(length($_) <= 0){ next; }
+		$_ = sub_conv_to_flagged_utf8($_);
 		$exifTool->ImageInfo($_);
 		$tmpDate = $exifTool->GetValue('CreateDate');
 		if(!defined($tmpDate)){ $tmpDate = 0; }	# Exifが無い場合は 0
@@ -414,10 +444,10 @@ sub sub_rename_main {
 
 	if($#arrImageFiles < 0){ return(''); }
 
-	$strReturn .= sprintf("対象ディレクトリ : %s", decode('utf8', $arrImageFiles[0][1]))."\n\n";
+	$strReturn .= "対象ディレクトリ : ".$arrImageFiles[0][1]."\n\n";
 
 	foreach(@arrImageFiles){
-		if(length($_->[3])<8){ $strReturn .= sprintf("--   : %s (no exif)", decode('utf8', $_->[2]))."\n"; }
+		if(length($_->[3])<8){ $strReturn .= "--   : ".$_->[2]." (no exif)\n"; }
 		else{
 			my @tm = localtime($_->[3]);
 			my $strFormat;
@@ -438,31 +468,33 @@ sub sub_rename_main {
 								$tm[2],		# hour
 								$tm[1]			# sec
 								);
+
+			if($flag_change_lowercase == 1){ $_->[2] = lc($_->[2]); }	# ファイル名の小文字化
+			
 			my $strNewName = sprintf("%s/%s-%s", $_->[1],		# dir
 								$strYMD,		# YMD
 								$_->[2]		# filename
 								);
 			
-			if($flag_change_lowercase == 1){ $strNewName = lc($strNewName); }
-			
 			if(length($strYMD)<length($_->[2]) && substr($_->[2], 0, length($strYMD)) eq $strYMD) {
 				# 改名済みの時は、スキップ
-				$strReturn .= sprintf("-- : %s", decode('utf8', $_->[2]))."\n";
+				$strReturn .= "-- : ".$_->[2]."\n";
 			}
 			else{
 				# 改名する
 				if($flag_preview eq 'preview'){
 					# プレビューモード
-					$strReturn .= sprintf("変更 : %s -> %s", decode('utf8', $_->[2]), decode('utf8', basename($strNewName)))."\n";
+					$strReturn .= "変更 : ".$_->[2]." -> ".basename($strNewName)."\n";
 					$nCount++;
 				}
 				else {
 					# 改名
+print("debug:".$_->[0]."->".$strNewName."\n");
 					if(rename($_->[0], $strNewName) == 1){
-						$strReturn .= sprintf("変更 : %s -> %s", decode('utf8', $_->[2]), decode('utf8', basename($strNewName)))."\n";
+						$strReturn .= "変更 : ".$_->[2]." -> ".basename($strNewName)."\n";
 						$nCount++;
 					}
-					else{ $strReturn .= sprintf("失敗 : %s", decode('utf8', $_->[2]))."\n"; }
+					else{ $strReturn .= "失敗 : ".$_->[2]."\n"; }
 				}
 			}
 		}
@@ -477,6 +509,58 @@ sub sub_rename_main {
 
 	return($strReturn);
 }
+
+
+# 任意の文字コードの文字列を、UTF-8フラグ付きのUTF-8に変換する
+sub sub_conv_to_flagged_utf8{
+
+	my $str = shift;
+
+	my $enc = Encode::Guess->guess($str);	# 文字列のエンコードの判定
+
+	# デバッグ表示
+#	print Data::Dumper->Dumper(\$enc)."\n";
+#	if(ref($enc) eq 'Encode::XS'){
+#		print("detect : ".$enc->mime_name()."\n");
+#	}
+#	print "is_utf8: ".utf8::is_utf8($str)."\n";
+
+	unless(ref($enc)){
+		# エンコード形式が2個以上帰ってきた場合 （shiftjis or utf8）
+		# 最初の候補でデコードする
+		my @arr_encodes = split(/ /, $enc);
+		if(lc($arr_encodes[0]) eq 'shiftjis' || lc($arr_encodes[0]) eq 'euc-jp' || 
+			lc($arr_encodes[0]) eq 'utf8' || lc($arr_encodes[0]) eq 'us-ascii'){
+				$str = Encode::decode($arr_encodes[0], $str);
+			}
+	}
+	else{
+		# UTF-8でUTF-8フラグが立っている時以外は、変換を行う
+		unless(ref($enc) eq 'Encode::utf8' && utf8::is_utf8($str) == 1){
+			$str = $enc->decode($str);
+		}
+	}
+
+	# デバッグ表示
+#	print "debug: ".$str."\n";
+
+	return($str);
+
+}
+
+
+# 任意の文字コードの文字列を、UTF-8フラグ無しのUTF-8に変換する
+sub sub_conv_to_unflagged_utf8{
+
+	my $str = shift;
+
+	# いったん、フラグ付きのUTF-8に変換
+	$str = sub_conv_to_flagged_utf8($str);
+
+	return(Encode::encode('utf8', $str));
+
+}
+
 
 # スクリプト終了 EOF
 
