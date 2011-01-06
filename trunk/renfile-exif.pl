@@ -56,16 +56,16 @@ use Encode::Guess qw/euc-jp shiftjis iso-2022-jp/;	# 必要ないエンコード
 #use Data::HexDump;
 
 
-#binmode( STDOUT, ":utf8" ); # "Wide character in print at ..." 警告を抑止
+# IOの文字コードを規定
 if($flag_charcode eq 'utf8'){
 	binmode(STDIN, ":utf8");
 	binmode(STDOUT, ":utf8");
 	binmode(STDERR, ":utf8");
 }
 if($flag_charcode eq 'shiftjis'){
-	binmode(STDIN, "encoding(sjis)");	# Windowsのコマンドラインではsjisになる
-	binmode(STDOUT, "encoding(sjis)");	# Windowsのコマンドラインではsjisになる
-	binmode(STDERR, "encoding(sjis)");	# Windowsのコマンドラインではsjisになる
+	binmode(STDIN, "encoding(sjis)");
+	binmode(STDOUT, "encoding(sjis)");
+	binmode(STDERR, "encoding(sjis)");
 }
 
 my $strTargetDir = $ENV{'HOME'};		# 対象ディレクトリ
@@ -84,7 +84,7 @@ if($flag_os eq 'windows'){
 }
 my @arrKnownExt = ('.jpg', '.jpeg', '.JPG', '.JPEG');
 
-my $flag_gui = 0;
+my $flag_gui = 0;	# GUIを表示するとき 1
 my $flag_fname_style = 'date-base';		# date-base, base-date, date : ファイル名決定で日時と元ファイル名の利用方法
 my $flag_undo_mode = 0;		# 0:OFF, 1:ON
 my $flag_verbose = 1;
@@ -556,8 +556,14 @@ sub sub_rename_main {
 
 	$strReturn .= "対象ディレクトリ : ".$arrImageFiles[0][1]."\n\n";
 
+	# ファイル一時退避用のランダム文字列（元ファイル→一時退避→新ファイル）
+	my $strT = '.';
+	for(1 .. 5){ $strT .= sub_rand_char(); }
+
+	# 改名orプレビュー pass1 （新ファイル名作成、一時ファイル名へ退避）
 	for(my $i=0; $i<=$#arrImageFiles; $i++){
-		if(length($arrImageFiles[$i][3])<8){
+		if(length($arrImageFiles[$i][3]) < 8){
+				# unix秒が8桁未満は異常
 				$strReturn .= "--   : ".$arrImageFiles[$i][2]." (no exif)\n";
 				$arrImageFiles[$i][4] = $arrImageFiles[$i][2].'.jpg';	# 新ファイル名リストに入れる（ファイル名重複検査用）
 			}
@@ -578,23 +584,37 @@ sub sub_rename_main {
 					$nCount++;
 				}
 				else {
-					# 改名
-					my $strT = '.';
-					for(1 .. 5){ $strT .= sub_rand_char(); }
+					# 改名（元ファイル→一時ファイル）
 					my $strTempFile = $arrImageFiles[$i][0] . $strT;
 
 					if(rename(sub_conv_to_local_charset($arrImageFiles[$i][0]),
-						 sub_conv_to_local_charset($strTempFile)) == 1 && 
-						rename(sub_conv_to_local_charset($strTempFile),
-						 sub_conv_to_local_charset($strNewName)) == 1){
-						$strReturn .= "変更 : ".basename($arrImageFiles[$i][0])." -> ".basename($strNewName)."\n";
-						$nCount++;
+						 sub_conv_to_local_charset($strTempFile)) == 1){
+#						$strReturn .= "変更 : ".basename($arrImageFiles[$i][0])." -> ".basename($strTempFile)."\n";
 					}
-					else{ $strReturn .= "失敗 : ".basename($arrImageFiles[$i][0])."\n"; }
+					else{ $strReturn .= "失敗 : ".basename($arrImageFiles[$i][0])." -> ".basename($strTempFile)."\n"; }
 				}
 			}
 		}
 	}
+
+	# 改名 pass2 （一時ファイルから新ファイル）
+	if($flag_preview ne 'preview'){
+		for(my $i=0; $i<=$#arrImageFiles; $i++){
+
+			if(length($arrImageFiles[$i][3]) < 8){ next; }	# exif無しスキップ
+			my $strNewName = $arrImageFiles[$i][1].$arrImageFiles[$i][4];	# 新ファイル名
+			if($arrImageFiles[$i][0] eq $strNewName){ next; }	# 新旧ファイル名同一スキップ
+			my $strTempFile = $arrImageFiles[$i][0] . $strT;
+			if(rename(sub_conv_to_local_charset($strTempFile),
+				 sub_conv_to_local_charset($strNewName)) == 1){
+				$strReturn .= "変更 : ".basename($arrImageFiles[$i][0])." -> ".basename($strNewName)."\n";
+				$nCount++;
+			}
+			else{ $strReturn .= "失敗 : ".basename($strTempFile)." -> ".basename($strNewName)."\n"; }
+
+		}
+	}
+
 
 	if($flag_preview eq 'preview'){
 		$strReturn .= "\n".sprintf("%d 個のファイル中、対象画像は %d 個です", $#arrImageFiles + 1, $nCount)."\n";
