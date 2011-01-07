@@ -12,6 +12,7 @@
 # version 0.2 (2010/December/06)
 # version 0.3 (2011/January/04)
 # version 0.4 (2011/January/05)
+# version 0.5 (2011/January/07)
 #
 # GNU GPL Free Software
 #
