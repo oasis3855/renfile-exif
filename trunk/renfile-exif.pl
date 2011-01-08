@@ -711,21 +711,18 @@ sub sub_conv_to_flagged_utf8{
 
 	my $enc = Encode::Guess->guess($str);	# 文字列のエンコードの判定
 
-	# デバッグ表示
-#	print Data::Dumper->Dumper(\$enc)."\n";
-#	if(ref($enc) eq 'Encode::XS'){
-#		print("detect : ".$enc->mime_name()."\n");
-#	}
-#	print "is_utf8: ".utf8::is_utf8($str)."\n";
-
 	unless(ref($enc)){
 		# エンコード形式が2個以上帰ってきた場合 （shiftjis or utf8）
-		# 最初の候補でデコードする
 		my @arr_encodes = split(/ /, $enc);
-		if(lc($arr_encodes[0]) eq 'shiftjis' || lc($arr_encodes[0]) eq 'euc-jp' || 
-			lc($arr_encodes[0]) eq 'utf8' || lc($arr_encodes[0]) eq 'us-ascii'){
+		if(grep(/^$flag_charcode/, @arr_encodes) >= 1){
+				# $flag_charcode と同じエンコードが検出されたら、それを優先する
+				$str = Encode::decode($flag_charcode, $str);
+		}
+		elsif(lc($arr_encodes[0]) eq 'shiftjis' || lc($arr_encodes[0]) eq 'euc-jp' || 
+				lc($arr_encodes[0]) eq 'utf8' || lc($arr_encodes[0]) eq 'us-ascii'){
+				# 最初の候補でデコードする
 				$str = Encode::decode($arr_encodes[0], $str);
-			}
+		}
 	}
 	else{
 		# UTF-8でUTF-8フラグが立っている時以外は、変換を行う
@@ -734,11 +731,7 @@ sub sub_conv_to_flagged_utf8{
 		}
 	}
 
-	# デバッグ表示
-#	print "debug: ".$str."\n";
-
 	return($str);
-
 }
 
 
